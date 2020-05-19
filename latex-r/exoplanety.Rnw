@@ -1,0 +1,627 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage[top=25mm, left=25mm, right=25mm, bottom=25mm, total={175mm, 247mm}, includehead=false, includefoot=false]{geometry}
+\usepackage{multicol}
+\usepackage{colortbl}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+\usepackage{parskip}
+\setlength{\parskip}{\medskipamount}
+\makeatletter 
+\newcommand{\@minipagerestore}{
+\setlength{\parindent}{15pt}
+\setlength{\parskip}{\medskipamount}}
+\makeatother
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+
+\begin{titlepage}
+\begin{center}
+\Large \rmfamily
+Univerzita Pardubice
+\par
+Fakulta elektrotechniky a informatiky
+\par
+\vspace{0pt plus 3fill}
+Statistické vyhodnocení objevených exoplanet
+\par
+\bigskip
+\par
+Michal Struna
+\par
+\vspace{0pt plus 5fill}
+Semestrální práce
+\par
+2019
+\end{center}
+\end{titlepage}
+\stepcounter{page}
+
+
+<<echo = FALSE>>=
+library(ggplot2)
+library(data.table)
+library(xtable)
+library(plyr)
+library(aplpack)
+
+PC_TO_LY <- 3.26
+
+histogram <- function(column, title, xlab, log = FALSE, font_size = 10, bins = 20) {
+  plot <- ggplot(data, column) +
+    ggtitle(title) + 
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 12),
+      axis.text.x = element_text(size = font_size),
+      axis.text.y = element_text(size = font_size)
+    ) +
+    geom_histogram(fill = "#555555", color = "grey", bins = bins) +
+    stat_bin(geom = "text", aes(label = ..count..), vjust = -0.5, bins = bins) +
+    xlab(xlab) +
+    ylab("")
+  
+  if (log) {
+    plot <- plot + scale_x_log10()
+  }
+  
+  return(plot)
+}
+
+data <- read.table("../planets.csv", sep = ",", head = TRUE)
+data$per <- data$pl_orbper
+data$meth <- data$pl_discmethod
+data$dist <- data$st_dist * PC_TO_LY
+data$rad <- data$pl_rade
+data$mass <- data$pl_bmasse
+data$smax <- data$pl_orbsmax
+data$stem <- data$st_teff
+data$pnum <- data$pl_pnum
+data$srad <- data$st_rad
+data$smass <- data$st_mass
+data$date <- data$pl_publ_date
+
+num_data.indexes <- c("dist", "mass", "rad", "smax", "per", "pnum", "smass", "srad", "stem")
+num_data <- data[num_data.indexes]
+
+get_between <- function(column, min, max, items = data) {
+  return(subset(items, between(items[, column], min, max)))
+}
+
+get_summary <- function(data, digits = 2) {
+  q <- quantile(data, na.rm = TRUE, names = FALSE, digits = digits)
+  result <- rbind(q[1], q[2], q[3], mean(data, na.rm = TRUE, digits = digits), q[4], q[5])
+  dimnames(result) <- list(
+    "Stat" = c("Min", "Qu1", "Median", "Mean", "Qu3", "Max")
+  )
+  
+  return(result)
+}
+
+table.gray <- function(content) {
+  paste("{\\cellcolor[rgb]{0.85, 0.85, 0.85}{", content ,"}}")
+}
+
+table.colored <- function(content, limit) {
+  val <- 1 - min(1, abs(content) / limit)
+  
+  if (content < 0) {
+      paste("{\\cellcolor[rgb]{", 1, ", ", val, ", ", val, "}{", content ,"}}")
+  } else if (content > 0) {
+      paste("{\\cellcolor[rgb]{", val, ", ", 1, ", ", val, "}{", content ,"}}")
+  } else {
+    content
+  }
+}
+
+table.custom <- function(x, colnames = TRUE, rownames = TRUE, caption = NULL, digits = 0, align = "l", colored = FALSE, floating = TRUE, columns = ncol(x) + 1) {
+  
+  if (colored) {
+    x[,] <- sapply(x, function(z) {
+      if (!is.na(as.numeric(z))) table.colored(round(as.numeric(z), digits), colored) else z
+    })
+  }
+  
+  print(
+    xtable(
+      x,
+      digits = digits,
+      align = c(rep(paste("|", align), times = columns), "|"),
+      caption = caption
+    ),
+    include.colnames = colnames,
+    include.rownames = rownames,
+    hline.after = seq(from = if (colnames) -1 else 0, to = nrow(x)),
+    sanitize.colnames.function = table.gray,
+    sanitize.rownames.function = table.gray,
+    sanitize.text.function = identity,
+    floating = floating
+  )
+}
+
+table.summary <- function(x, digits = 2) {
+  stats <- get_summary(x, digits)
+  table.custom(stats, digits = digits, colnames = FALSE, floating = FALSE)
+}
+
+# Separate dependency by vals into intervals and count it.
+# Variables that are created:
+#   name.vals, name.names, name.labels, name.vars, name.data, name.counts, name.table
+# data$name contains current category from names by value of vals.
+category <- function(name, dependency, vals, names, labels, unit) {
+  assign(paste0(name, ".vals"), vals, envir = .GlobalEnv)
+  assign(paste0(name, ".names"), names, envir = .GlobalEnv)
+  assign(paste0(name, ".labels"), labels, envir = .GlobalEnv)
+  assign(paste0(name, ".vars"), c(unit, "Počet"), envir = .GlobalEnv)
+  data[[name]] <<-  cut(get(dependency, pos = data), vals, names)
+  assign(paste0(name, ".data"), count(data, name), envir = .GlobalEnv)
+  assign(paste0(name, ".counts"), get(paste0(name, ".data"))$freq[1:length(get(paste0(name, ".names")))], envir = .GlobalEnv)  
+  table <- t(data.frame(val = get(paste0(name, ".labels")), count = get(paste0(name, ".counts"))))
+  colnames(table) = names
+  rownames(table) = get(paste0(name, ".vars"))
+  assign(paste0(name, ".table"), table, envir = .GlobalEnv)
+}
+
+# Spectral classes of stars.
+category(
+  "scls", "stem",
+  c(-Inf, 3500, 5000, 6000, 7500, 11000, 25000, Inf),
+  c("M", "K", "G", "F", "A", "B", "O"),
+  c("< 3,5", "3,5-5", "5-6", "6-7,5", "7,5-11", "11-25", "> 25"),
+  "Teplota [tisíce K]"
+)
+
+# Planet orbit period categoris.
+category(
+  "ptype", "per",
+  c(0, 5, 50, 500, Inf),
+  c("Lava", "Hot", "Normal", "Cold"),
+  c("< 5", "5-50", "50-500", "> 500"),
+  "Doba oběhu [dny]"
+)
+
+# Planet size cateogires.
+category(
+  "stype", "rad",
+  c(0, 0.7, 2, 6, Inf),
+  c("Mercurian", "Earth", "Neptunian", "Jovian"),
+  c("< 0,7", "0,7-2", "2-6", "> 6"),
+  "Poloměr [poloměry Země]"
+)
+
+# Distance categories.
+dist.median <- round(median(data$dist, na.rm = TRUE))
+                      
+category(
+  "dtype", "dist",
+  c(0, dist.median, Inf),
+  c("Near", "Far"),
+  c(paste("<", dist.median), paste(">", dist.median)),
+  "Světelných let"
+)
+@   
+
+\section{Úvod}
+
+Tato semestrální práce zkoumá data a~vztahy mezi daty u~objevených exoplanet. Jedná se o~planety mimo sluneční soustavu, kterých bylo k~listopadu 2019 potvrzeno 4104. K~práci byl využit archiv pocházející od NASA a obsahujícící všechny tyto planety. Je dostupný přes webové API nebo ke stažení jako CSV na adrese \url{https://exoplanetarchive.ipac.caltech.edu}.
+
+\section{Zkoumané údaje}
+\subsection{Způsob objevení}
+
+\begin{center}
+
+<<label = discmethod, echo = FALSE, fig = TRUE>>=
+tmp <- count(data, "meth")
+
+ggplot(tmp, aes(x = meth, y = freq)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1, size = 10)) +
+  labs(x = "Způsob objevení", y = "Počet exoplanet") +
+  geom_text(aes(label = freq), vjust = -0.5)
+@
+
+\end{center}
+
+Protože exoplanety nelze pozorovat přímo, jsou k jejich objevování využívány různé techniky nepřímého pozorování. Počet planet objevených jednotlivými metodami je zobrazen v histogramu výše.
+
+\newpage
+\subsection{Poloměr planety}
+\begin{figure}[!htb]
+\centering
+<<echo = FALSE, fig = TRUE>>=
+histogram(
+  aes(x = rad),
+  "Histogram poloměrů planet",
+  "Poloměr [poloměr Země]",
+  TRUE
+)
+@
+\end{figure}
+
+\setlength{\columnsep}{0.43\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.7\textwidth}
+Poloměr planet je uváděn v poloměrech Země. Histogram četností planet v jednotlivých velikostních kategoriích má tvar bimodálního rozdělení. To je způsobeno tím, že terestrické (kamenné) planety podobné Zemi jsou často mnohem menší, než velcí plynní obři typu Jupiter.
+
+Všechny planety byly následně rozdělěny do všeobecně uznávaných velikostních kategorií dle následující tabulky:
+\end{minipage}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$rad)
+@
+\end{minipage}
+\end{multicols}
+
+<<echo = FALSE, results = tex>>=
+table.custom(stype.table, caption = "Rozdělení planet do kategorií dle velikosti", colored = max(stype.counts))
+@
+
+\newpage
+\subsection{Vzdálenost od Země}
+
+\setlength{\columnsep}{0\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$dist)
+@
+\end{minipage}
+\begin{minipage}{0.7\textwidth}
+Vzdálenost planet od Země je udávána ve světelných letech (zkratka ly). Světelný rok je vzdálenost, kterou světlo ve vakuu urazí za jeden rok, tedy přibližně $9.46 * 10^{12}$~km.
+
+Nejbližší exoplaneta vůbec, ve vzdálenosti 4,2~ly od Země, obíhá kolem nejbližší hvězdy Slunci -- Proxima Centauri. Většina planet se ale nachází ve vzdálenosti 1~000 až 3~000~ly.
+\end{minipage}
+\end{multicols}
+
+\subsection{Hmotnost planety}
+
+\setlength{\columnsep}{0.43\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.7\textwidth}
+Hmotnost planet je vyjádřená v hmotnostech Země. Nejvyhledávanějšími planety jsou ty, jejichž hmotnost je podobná Zemi.
+
+Hmotnost malých planet je obtížné určit, a proto je u více jak poloviny (2~448) hmotnost neznámá. Z~tohoto důvodu je 75 \% změřených planet více jak 28krát hmotnějších, než Země.
+\end{minipage}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$mass)
+@
+\end{minipage}
+\end{multicols}
+
+\subsection{Velká poloosa}
+
+\setlength{\columnsep}{0\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$smax)
+@
+\end{minipage}
+\begin{minipage}{0.7\textwidth}
+Velká poloosa je průměrem minimální a~maximální vzdálenosti planety od své hvězdy. Je udávána v~astronomických jednotkách ~(AU), která je odzvozena od velké poloosy Země (149~597~870 km).
+
+Opět platí, že nejvyhledávanější hodnota je rovna 1, protože pak na planetě budou Zemi podobnější podmínky. Záleží však i~na typu hvězdy.
+\end{minipage}
+\end{multicols}
+
+\subsection{Perioda oběhu planety}
+
+\setlength{\columnsep}{0.43\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.7\textwidth}
+Perioda oběhu planety udává, za kolik pozemských dní planeta oběhne kolem své hvězdy. 75~\% planet má dobu oběhu menší než 42~dní a pouze malé procento planet větší, než 1~000~dní.
+
+Planety byly dále rozděleny do kategorií dle následující tabulky v~závislosti na jejich periodě oběhu:
+
+\end{minipage}
+
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$per)
+@
+\end{minipage}
+\end{multicols}
+
+<<echo = FALSE, results = tex>>=
+table.custom(ptype.table, caption = "Rozdělení planet do kategorií dle periody oběhu", colored = max(ptype.counts))
+@
+
+\newpage  
+\subsection{Počet planet v systému}
+
+\setlength{\columnsep}{0\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$pnum)
+@
+\end{minipage}
+\begin{minipage}{0.7\textwidth}
+V~jedné soustavě je zřídkakdy pouze 1~planeta, avšak z~důvodu omezených podmínek pozorování je~i~přesto více jak polovina planet v systému samotných.
+
+Z druhé strany existuje 1~systém se 7~planetami a 1~systém s~8~planetami.
+\end{minipage}
+\end{multicols}
+
+\subsection{Poloměr hvězdy}
+
+\setlength{\columnsep}{0.43\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.7\textwidth}
+Poloměr rodičovských hvězd planet je určován v~poloměrech Slunce.
+
+50~\% objevených planet obíhá kolem hvězdy, jejíž poloměr se pohybuje mezi 0,8~až 1,26~poloměry Slunce.
+\end{minipage}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$srad)
+@
+\end{minipage}
+\end{multicols}
+
+\subsection{Hmotnost hvězdy}
+
+\setlength{\columnsep}{0\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$smass)
+@
+\end{minipage}
+\begin{minipage}{0.7\textwidth}
+Hmotnost hvězd je udávána v násobcích hmotnosti Slunce.
+
+Stejně jako u poloměru, i hmotnost velkého množství hvězd je podobná Slunci. Konkrétně 50~\% hvězd, kolem kterých je objevena alespoň 1~exoplaneta, má hmotnost v rozmezí 0,81~až~1,13 hmotností Slunce.
+\end{minipage}
+\end{multicols}
+
+\subsection{Povrchová teplota hvězdy}
+
+\setlength{\columnsep}{0.43\textwidth}
+\begin{multicols}{2}
+\begin{minipage}{0.7\textwidth}
+Povrchová teplota hvězdy je udávána v Kelvinech. Nejchladnější hvězdy mají červenou barvu a čím je jejich teplota větší, tím více jdou do žluté, bílé a nakonec i~modré.
+
+V tabulce níže je rozdělení hvězd do spektrálních kategorií dle jejich teploty. Je patrné, že nejvíce exoplanet bylo objeveno u žlutých hvězd (G) podobných Slunci.
+
+\end{minipage}
+\begin{minipage}{0.3\textwidth}
+<<echo = FALSE, results = tex>>=
+table.summary(data$stem)
+@
+\end{minipage}
+\end{multicols}
+
+<<echo = FALSE, results = tex>>=
+table.custom(scls.table, caption = "Rozdělení hvězd do spektrálních tříd dle povrchové teploty", colored = max(scls.counts))
+@
+
+\newpage
+
+\section{Chernoffovy tváře}
+\begin{figure}[!htb]
+\vspace{-1in}\hspace{-0.2\textwidth}
+<<label = faces, echo = FALSE, fig = FALSE>>=
+na.mean <- function(vals, default = 0) {
+  result <- mean(vals, na.rm = TRUE)
+  
+  if (is.nan(result)) {
+    result <- default
+  }
+  
+  return(result)
+}
+
+groups <- ddply(data, ~meth, summarise,
+                dist = na.mean(dist),
+                rad = na.mean(rad),
+                mass = na.mean(mass),
+                srad = na.mean(srad),
+                smass = na.mean(smass),
+                smax = na.mean(smax),
+                per = na.mean(per),
+                pnum = na.mean(pnum),
+                stem = na.mean(stem)
+              )
+
+faces.data <- faces(groups[, 2:10], labels = groups[, "meth"], cex = 0.9
+                    , print.info = FALSE)
+faces.third <- round(nrow(faces.data$info) / 3)
+@
+\includegraphics[width = 1.4\textwidth]{exoplanety-faces.pdf}
+\vspace{-3.25in}
+\end{figure}
+
+Na Chernoffových tvářích jsou ukázány rozdíly průměrných hodnot planet mezi planetami objevenými jednotlivými metodami.
+
+\setlength{\columnsep}{0\textwidth}
+\begin{center}
+\begin{multicols}{3}
+\begin{minipage}{\columnwidth}
+<<echo = FALSE, results = tex>>=
+table.custom(data.frame(faces.data$info[1:faces.third,]), floating = FALSE, rownames = FALSE)
+@
+\end{minipage}
+\begin{minipage}{\columnwidth}
+<<echo = FALSE, results = tex>>=
+table.custom(data.frame(faces.data$info[(faces.third + 1):(2 * faces.third),]), floating = FALSE, rownames = FALSE)
+@
+\end{minipage}
+\begin{minipage}{\columnwidth}
+<<echo = FALSE, results = tex>>=
+table.custom(data.frame(faces.data$info[(2 * faces.third + 1):(nrow(faces.data$info)),]), floating = FALSE, rownames = FALSE)
+@
+\end{minipage}
+\end{multicols}
+\end{center}
+\vspace{-0.35in}
+<<echo = FALSE, results = tex>>=
+table.custom(data.frame(faces.data$info[0]), colnames = FALSE, caption = "Vlastnosti tváří popisující vlastnosti planet")
+@
+
+\newpage
+\section{Korelační matice}
+
+<<echo = FALSE, results = tex>>=
+table.custom(cor(num_data, use = "complete.obs"), digits = 2, caption = "Korelační matice", colored = 1)
+@
+
+V~korelační matici lze vidět lineární závislost mezi velkou poloosou a~dobou oběhu planety, která vychází z~Keplerových zákonů. Slabá záporná korelace je i~mezi počtem planet a~poloměrem planety. Čím větší planeta je, tím spíše bude v~soustavě méně planet.
+
+Velice slabá korelace (0,58) je viditelná mezi hmotností hvězdy a~poloměrem planety. U~hmotnějších hvězd byly častěji pozorovány větší planety. Naopak vzdálenost planety od Země nezávisí na žádném jiném údaji -- planety všech možných vlastností jsou objevovány v různých vzdálenostech od Země.
+
+\section{Chí-kvadrát test}
+
+<<echo = FALSE, results = tex>>=
+size.vs.period <- table(data$stype, data$ptype)
+@
+
+Do kontingenční tabulky byla umístěna četnost planet v~různých velikostních kategoriích v~závislosti na periodě oběhu kolem hvězdy. Kvůli nedostatku objevených ledových planet se poslední sloupec nebude promítat do testu nezávislosti.
+
+\begin{figure}[!htb]
+  \centering
+  \begin{subfigure}[b]{0.5\textwidth}
+<<echo = FALSE, results = tex>>=
+table.custom(size.vs.period[,1:3], colored = max(size.vs.period), floating = FALSE)
+@
+  \end{subfigure}
+  \begin{subfigure}[b]{0.2\textwidth}
+<<echo = FALSE, results = tex>>=
+ignored.cols <- data.frame(size.vs.period[,4])
+colnames(ignored.cols)[1] = ptype.names[4]
+
+table.custom(ignored.cols, colored = max(size.vs.period), floating = FALSE, rownames = FALSE)
+@
+  \end{subfigure}
+  \vspace{-1cm}
+\end{figure}
+<<echo = FALSE, results = tex>>=
+table.custom(data.frame(size.vs.period[0]), colnames = FALSE, caption = "Četnost planet dle velikosti a periody oběhu hvězdy")
+@
+
+\begin{itemize}
+  \item H\textsubscript{0}:~Vzdálenost planet od mateřské hvězdy nezávisí na jejich velikosti.
+  \item H\textsubscript{1}:~Existuje spojitost mezi vzdáleností planety od hvězdy a~její velikostí.
+\end{itemize}
+
+<<echo = FALSE>>=
+chisq.test(size.vs.period[,1:3])
+@
+
+Protože p-value je dostatečně malá, velikost planety a její perioda oběhu jsou závislé proměnné.
+
+\section{T-test}
+
+Cílem t-testu je demonstrovat na příkladu závěr chí-kvadrát testu v~předchozí kapitole~--~velikost planety a~perioda oběhu kolem hvězdy jsou závislé proměnné. Pro tento účel byl proveden náhodný výběr o~velikosti 1~/~10 z~velikostních kategorií planet Neptunian a~Earth. T-test testuje doby periody planet v těchto náhodných výběrech.
+
+<<echo = FALSE>>=
+earths <-subset(data, stype == "Earth")
+neptunians <- subset(data, stype == "Neptunian")
+
+earths <- earths[sample(nrow(earths), round(nrow(earths) / 10)),]
+neptunians <- neptunians[sample(nrow(neptunians), round(nrow(neptunians) / 10)),]
+
+t.test(earths$per, neptunians$per, var.equal = TRUE)
+@
+
+Protože p-value je menší než~0,05, můžeme nulovou hypotézu na 95\% hladině významnosti zamítnout a~říct, že střední hodnota period oběhů planet ve skupinách Earth a~Neptunian není stejná. V konfidenčním intervalu je uvedeno, že střední hodnota periody oběhu planet typu Earth je o~několik jednotek až desítek (dní) menší, než u~planet ze skupiny Neptunian.
+
+\section{QQplot}
+
+V kapitole 2.10 bylo řečeno, že nejvíce objevených exoplanet obíhá kolem hvězd s~podobnou teplotou jako naše Slunce. Do QQ grafu bude proto zanesena právě povrchová teplota hvězd, u níž se bude zjišťovat, zda vyhovuje normálnímu rozdělení.
+
+\begin{figure}[!htb]
+  \centering
+  \begin{subfigure}[b]{0.7\textwidth}
+<<echo = FALSE, fig = TRUE>>=
+ggplot(data, aes(sample = stem)) +
+  stat_qq() +
+  stat_qq_line(col = "red") +
+  theme(
+    axis.text.y = element_text(angle = 90, size = 16),
+    axis.text.x = element_text(size = 16),
+    text = element_text(size = 16)
+  ) +
+  labs(x = "Normální rozdělení", y = "Povrchová teplota")
+@
+  \end{subfigure}
+\end{figure}
+
+Většina bodů leží na požadované přímce, a~proto lze říci, že rozdělení teplot je blízké normálnímu rozdělení. Výjimkou jsou extrémy, které se od normálního rozdělení vzdalují.
+
+\section{Analýza rozptylu}
+
+\begin{center}
+<<echo = FALSE, fig = TRUE>>=
+ggplot(data, aes(per, mass, colour = factor(meth))) +
+  geom_point(stroke = 2, size = 1, alpha = 0.2) +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_manual(values = c("orange", "blue", "gray", "chartreuse", "gold", "cyan", "deeppink", "black", "red", "darkgreen", "purple")) +
+    theme(
+      axis.text.y = element_text(angle = 90, size = 11),
+      axis.text.x = element_text(size = 11),
+      legend.position = "bottom"
+    ) +
+  labs(x = "Perioda oběhu [dny]", y = "Hmotnost [hmotnost Země]") +
+  guides(colour = guide_legend(nrow = 4, byrow = TRUE, title = "Metoda"))
+@
+\end{center}
+
+Graf výše ukazuje rozdílné hmotnosti a periody planet při rozdílných metodách objevení. Hmotné hvězdy blízko své hvězdy byly objevovány převážně metodou Transit, kdežto hmotné hvězdy daleko od své hvězdy metodou Radial Velocity.
+
+<<echo = FALSE>>=
+summary(aov(per ~ stype * meth * dtype, data))
+@
+
+Ve výsledcích analýzy rozptylu je uvedeno, že na dobu periody skutečně má vliv metoda objevení (meth) i velikost (stype). Naproti tomu vzdálenost od Země (dtype) nikoliv.
+
+\newpage
+
+\section{Regrese}
+
+Cílem regrese je určit, zda počet publikací objevů exoplanet v průběhu posledních let klesá nebo stoupá.
+
+\begin{center}
+<<echo = FALSE, fig = TRUE>>=
+discs <- tail(count(data, "date"), -1)
+
+ggplot(discs, aes(x = date, y = freq, group = 1)) +
+  geom_line() +
+  ylim(0, 100) +
+  geom_smooth(method = "lm") +
+  scale_x_discrete(breaks = discs[seq(1, nrow(discs), by = round(nrow(discs) / (nrow(discs) / 12))), "date"]) +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1, size = 10)) +
+  labs(x = "Měsíc", y = "Počet publikací")
+@
+\end{center}
+
+Měsíční počet publikací exoplanet stále stoupá. V~grafu je vyznačen i~95\% interval spolehlivosti.
+
+\newpage
+
+\section{Boxplot}
+
+V závěrečné kapitole budou na boxplotu zobrazeny statistiky poloměrů planet v~závislosti na spektrální třídě hvězdy, kolem které obíhají.
+
+\begin{center}
+<<echo = FALSE, fig = TRUE>>=
+ggplot(subset(data, !is.na(scls)), aes(x = scls, y = rad, color = scls)) +
+  geom_boxplot() + 
+  scale_y_log10() +
+  scale_color_manual(values = c("#DD0000", "#DD9900", "#CCAA00", "#CCAA55", "#55CCFF", "#0055FF")) +
+  theme(
+    axis.text = element_text(size = 11),
+    legend.position = "bottom"
+  ) +
+  labs(x = "Spektrální třída hvězdy", y = "Poloměr planety [poloměr Země]")
+@
+\end{center}
+
+Největší planety obíhají kolem modrobílých hvězd (třída A). Nejmenší objevená planeta obíhá kolem žluté hvězdy (třída G). Kolem hvězd třídy B byla objevena pouze jedna planeta, a~proto není box pro tuto skupinu zobrazen.
+
+\end{document}
